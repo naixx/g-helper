@@ -6,11 +6,15 @@ using GHelper.Helpers;
 using GHelper.Input;
 using GHelper.Mode;
 using GHelper.Peripherals;
+using GHelper.UI;
 using Microsoft.Win32;
 using Ryzen;
 using System.Diagnostics;
 using System.Globalization;
+using System.Management;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Timers;
 using static NativeMethods;
 
 namespace GHelper
@@ -22,7 +26,7 @@ namespace GHelper
         {
             Text = "G-Helper",
             Icon = Properties.Resources.standard,
-            Visible = true
+            Visible = true 
         };
 
         public static AsusACPI acpi;
@@ -45,6 +49,8 @@ namespace GHelper
         public static InputDispatcher? inputDispatcher;
 
         private static PowerLineStatus isPlugged = SystemInformation.PowerStatus.PowerLineStatus;
+        private static PerformanceCounter _cpuCounter = new PerformanceCounter("Processor Information", "% Processor Performance", "_Total");
+
 
         // The main entry point for the application
         public static void Main(string[] args)
@@ -89,7 +95,7 @@ namespace GHelper
             RyzenControl.Init();
 
             trayIcon.MouseClick += TrayIcon_MouseClick;
-
+            
             inputDispatcher = new InputDispatcher();
 
             settingsForm.InitAura();
@@ -97,7 +103,8 @@ namespace GHelper
 
             gpuControl.InitXGM();
 
-            SetAutoModes(init: true);
+            SetAutoModes(init : true);
+            SetTimer();
 
             // Subscribing for system power change events
             SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
@@ -154,6 +161,82 @@ namespace GHelper
 
         }
 
+        private static void SetTimer()
+        {
+            var sensorTimer = new System.Timers.Timer(1000);
+            sensorTimer.Elapsed += OnTimedEvent;
+            sensorTimer.Enabled = true;
+        }
+
+        private static void OnTimedEvent(object? sender, ElapsedEventArgs e)
+        {
+            RefreshSensors();
+        }
+        static Bitmap bitmap = new Bitmap(Program.trayIcon.Icon.Size.Width, Program.trayIcon.Icon.Size.Height);
+        static Graphics g = Graphics.FromImage(bitmap);
+        static Brush b = new SolidBrush(Color.White);
+        static Font f = new Font(SystemFonts.DefaultFont.FontFamily, 9);
+        static  Font f2 = new Font(SystemFonts.DefaultFont.FontFamily, 6);
+        static ManagementObjectSearcher mos = new ManagementObjectSearcher("SELECT * FROM Win32_Processor");
+        static ManagementObject obj = mos.Get().OfType<ManagementObject>().FirstOrDefault();
+
+        private static object syncRoot = new Object();
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Auto)]
+        extern static bool DestroyIcon(IntPtr handle);
+        public static async void RefreshSensors(bool force = false)
+        {
+            string cpuTemp = "";
+            string cpu = "";
+            string gpuTemp = "";
+            string gpu = "";
+            string battery = "";
+            string charge = "";
+            string cpuFreq = "";
+
+            HardwareControl.ReadSensors();
+
+            if (HardwareControl.cpuTemp > 0)
+            {
+                cpuTemp = ": " + Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "°C";
+                cpu = Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "°";
+            }
+
+            if (HardwareControl.gpuTemp > 0)
+            {
+                gpuTemp = $": {HardwareControl.gpuTemp}°C";
+                gpu = HardwareControl.gpuTemp + "°";
+            }
+
+            double clockSpeed = 0;
+            //foreach (ManagementObject obj in mos.Get())
+            //{
+                  clockSpeed = Convert.ToDouble(obj["MaxClockSpeed"]);
+                cpuFreq += " " + clockSpeed;
+            //}
+           // GC.WaitForPendingFinalizers();
+              cpuFreq = Double.Round((_cpuCounter.NextValue() / 100) * clockSpeed).ToString();
+
+          
+              string trayTip = "CPU" + cpuTemp + " " + cpuFreq + "MHz " + HardwareControl.cpuFan;
+
+              var c = Color.FromArgb(100, RForm.colorStandard);
+            lock (syncRoot) { 
+              g.Clear(c);
+              g.DrawString(cpu, f, b, 0, -7);
+              //g.DrawString((Program.acpi.GetFan(AsusFan.CPU)*100).ToString(), f2, b, -5, 26);
+              g.DrawString(cpuFreq, f2, b, 0, 26);
+
+              // g.DrawString(gpu, f, b, -5, 20);
+              var hicon = bitmap.GetHicon();
+                var newIcon = Icon.FromHandle(hicon);
+             //Program.trayIcon.Icon.Dispose();
+                //Program.trayIcon.Icon.
+              Program.trayIcon.Icon = (Icon) newIcon.Clone();
+                newIcon.Dispose();
+                DestroyIcon(hicon);
+            }
+
+        }
 
         private static void SystemEvents_SessionEnding(object sender, SessionEndingEventArgs e)
         {
