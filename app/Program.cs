@@ -22,7 +22,7 @@ namespace GHelper
         {
             Text = "G-Helper",
             Icon = Properties.Resources.standard,
-            Visible = true
+            Visible = true 
         };
 
         public static AsusACPI acpi;
@@ -89,7 +89,7 @@ namespace GHelper
             RyzenControl.Init();
 
             trayIcon.MouseClick += TrayIcon_MouseClick;
-
+            
             inputDispatcher = new InputDispatcher();
 
             settingsForm.InitAura();
@@ -98,6 +98,8 @@ namespace GHelper
             gpuControl.InitXGM();
 
             SetAutoModes(init: true);
+ 
+            PerformanceNotificationHelper.SetTimer();
 
             // Subscribing for system power change events
             SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
