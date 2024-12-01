@@ -175,8 +175,8 @@ namespace GHelper
         static Bitmap bitmap = new Bitmap(Program.trayIcon.Icon.Size.Width, Program.trayIcon.Icon.Size.Height);
         static Graphics g = Graphics.FromImage(bitmap);
         static Brush b = new SolidBrush(Color.White);
-        static Font f = new Font(SystemFonts.DefaultFont.FontFamily, 9);
-        static  Font f2 = new Font(SystemFonts.DefaultFont.FontFamily, 6);
+        static Font f = new Font(SystemFonts.DefaultFont.FontFamily, 6);
+        static  Font f2 = new Font(SystemFonts.DefaultFont.FontFamily, 4);
         static ManagementObjectSearcher mos = new ManagementObjectSearcher("SELECT * FROM Win32_Processor");
         static ManagementObject obj = mos.Get().OfType<ManagementObject>().FirstOrDefault();
 
@@ -197,14 +197,14 @@ namespace GHelper
 
             if (HardwareControl.cpuTemp > 0)
             {
-                cpuTemp = ": " + Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "°C";
-                cpu = Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "°";
+                cpuTemp = ": " + Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "C\u00b0";
+                cpu = Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "\u00b0";
             }
 
             if (HardwareControl.gpuTemp > 0)
             {
-                gpuTemp = $": {HardwareControl.gpuTemp}°C";
-                gpu = HardwareControl.gpuTemp + "°";
+                gpuTemp = $": {HardwareControl.gpuTemp}C\u00b0";
+                gpu = HardwareControl.gpuTemp + "\u00b0";
             }
 
             double clockSpeed = 0;
@@ -222,9 +222,9 @@ namespace GHelper
               var c = Color.FromArgb(100, RForm.colorStandard);
             lock (syncRoot) { 
               g.Clear(c);
-              g.DrawString(cpu, f, b, 0, -7);
+              g.DrawString(cpu, f, b, 0, -4);
               //g.DrawString((Program.acpi.GetFan(AsusFan.CPU)*100).ToString(), f2, b, -5, 26);
-              g.DrawString(cpuFreq, f2, b, 0, 26);
+              g.DrawString(cpuFreq, f2, b, 0, 18);
 
               // g.DrawString(gpu, f, b, -5, 20);
               var hicon = bitmap.GetHicon();
