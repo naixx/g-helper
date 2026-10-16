@@ -184,7 +184,7 @@ public static class AsusLampArray
     {
         if (!Available) return;
         bool streaming = mode is AuraMode.HEATMAP or AuraMode.AMBIENT or AuraMode.GRADIENT
-            or AuraMode.ZONETEST or AuraMode.AUDIO or AuraMode.AUDIOPULSE;
+            or AuraMode.ZONETEST or AuraMode.AUDIO or AuraMode.AUDIOPULSE or AuraMode.FADE;
         if (streaming) controlled = false;
         else Reset();
     }
