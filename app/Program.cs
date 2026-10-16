@@ -8,15 +8,11 @@ using GHelper.Mode;
 using GHelper.Overlay;
 using GHelper.Peripherals;
 using GHelper.USB;
-using GHelper.UI;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Globalization;
-using System.Management;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Text;
-using System.Timers;
 using static NativeMethods;
 
 namespace GHelper
@@ -45,8 +41,6 @@ namespace GHelper
         private static readonly object autoLock = new();
 
         public static InputDispatcher? inputDispatcher;
-
-        private static PerformanceCounter _cpuCounter = new PerformanceCounter("Processor Information", "% Processor Performance", "_Total");
 
         // The main entry point for the application
         public static void Main(string[] args)
@@ -129,8 +123,6 @@ namespace GHelper
                 Icon = Properties.Resources.standard,
                 Visible = true
             };
-            trayBitmap = new Bitmap(Program.trayIcon.Icon.Size.Width, Program.trayIcon.Icon.Size.Height);
-            trayGraphics = Graphics.FromImage(trayBitmap);
 
             var trayRetry = new System.Windows.Forms.Timer { Interval = 5000 };
             trayRetry.Tick += (_, _) => { trayRetry.Dispose(); trayIcon.Visible = false; trayIcon.Visible = true; };
@@ -144,6 +136,7 @@ namespace GHelper
             trayIcon.MouseClick += TrayIcon_MouseClick;
             trayIcon.MouseMove += TrayIcon_MouseMove;
 
+
             inputDispatcher = new InputDispatcher();
 
             settingsForm.InitAura();
@@ -151,8 +144,8 @@ namespace GHelper
 
             ScreenControl.InitScreen();
 
-            SetAutoModes(init : true);
-            SetTimer();
+            SetAutoModes(init: true);
+            TrayMonitor.Start();
 
             powerSettleTimer.Elapsed += OnPowerSettled;
 
@@ -234,82 +227,6 @@ namespace GHelper
             Application.Run();
         }
 
-        private static void SetTimer()
-        {
-            var sensorTimer = new System.Timers.Timer(1000);
-            sensorTimer.Elapsed += OnTimedEvent;
-            sensorTimer.Enabled = true;
-        }
-
-        private static void OnTimedEvent(object? sender, ElapsedEventArgs e)
-        {
-            RefreshSensors();
-        }
-        static Bitmap trayBitmap;
-        static Graphics trayGraphics;
-        static Brush b = new SolidBrush(Color.White);
-        static Font f = new Font(SystemFonts.DefaultFont.FontFamily, 6);
-        static Font f2 = new Font(SystemFonts.DefaultFont.FontFamily, 4);
-        static ManagementObjectSearcher mos = new ManagementObjectSearcher("SELECT * FROM Win32_Processor");
-        static ManagementObject obj = mos.Get().OfType<ManagementObject>().FirstOrDefault();
-
-        private static object syncRoot = new Object();
-        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Auto)]
-        extern static bool DestroyIcon(IntPtr handle);
-        public static async void RefreshSensors(bool force = false)
-        {
-            string cpuTemp = "";
-            string cpu = "";
-            string gpuTemp = "";
-            string gpu = "";
-            string battery = "";
-            string charge = "";
-            string cpuFreq = "";
-
-            HardwareControl.ReadSensors();
-
-            if (HardwareControl.cpuTemp > 0)
-            {
-                cpuTemp = ": " + Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "C\u00b0";
-                cpu = Math.Round((decimal)HardwareControl.cpuTemp).ToString() + "\u00b0";
-            }
-
-            if (HardwareControl.gpuTemp > 0)
-            {
-                gpuTemp = $": {HardwareControl.gpuTemp}C\u00b0";
-                gpu = HardwareControl.gpuTemp + "\u00b0";
-            }
-
-            double clockSpeed = 0;
-            //foreach (ManagementObject obj in mos.Get())
-            //{
-                  clockSpeed = Convert.ToDouble(obj["MaxClockSpeed"]);
-                cpuFreq += " " + clockSpeed;
-            //}
-           // GC.WaitForPendingFinalizers();
-              cpuFreq = Double.Round((_cpuCounter.NextValue() / 100) * clockSpeed).ToString();
-
-          
-              string trayTip = "CPU" + cpuTemp + " " + cpuFreq + "MHz " + HardwareControl.cpuFan;
-
-              var c = Color.FromArgb(100, RForm.colorStandard);
-            lock (syncRoot) { 
-              trayGraphics.Clear(c);
-              trayGraphics.DrawString(cpu, f, b, 0, -4);
-              //g.DrawString((Program.acpi.GetFan(AsusFan.CPU)*100).ToString(), f2, b, -5, 26);
-              trayGraphics.DrawString(cpuFreq, f2, b, 0, 18);
-
-              // g.DrawString(gpu, f, b, -5, 20);
-              var hicon = trayBitmap.GetHicon();
-                var newIcon = Icon.FromHandle(hicon);
-             //Program.trayIcon.Icon.Dispose();
-                //Program.trayIcon.Icon.
-              Program.trayIcon.Icon = (Icon) newIcon.Clone();
-                newIcon.Dispose();
-                DestroyIcon(hicon);
-            }
-
-        }
 
         private static void SystemEvents_SessionEnding(object sender, SessionEndingEventArgs e)
         {
@@ -552,6 +469,8 @@ namespace GHelper
 
         static void OnExit(object sender, EventArgs e)
         {
+            TrayMonitor.Stop();
+
             if (trayIcon is not null)
             {
                 trayIcon.Visible = false;
