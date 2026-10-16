@@ -58,6 +58,7 @@ namespace GHelper.USB
         ZONETEST = 25,
         AUDIO = 26,
         AUDIOPULSE = 27,
+        FADE = 28,
     }
 
     public enum AuraSpeed : int
@@ -205,6 +206,7 @@ namespace GHelper.USB
             modes[AuraMode.BATTERY] = "Battery";
             modes[AuraMode.AUDIO] = "Audio Spectrum";
             modes[AuraMode.AUDIOPULSE] = "Audio Pulse";
+            modes[AuraMode.FADE] = "Two Color Fade";
 
             if (isStrixKb)
             {
@@ -264,7 +266,7 @@ namespace GHelper.USB
 
         public static bool HasSecondColor()
         {
-            return (mode == AuraMode.AuraBreathe || mode == AuraMode.GRADIENT) && (!isACPI || AppConfig.IsDynamicLightingOnly());
+            return (mode == AuraMode.AuraBreathe || mode == AuraMode.GRADIENT || mode == AuraMode.FADE) && (!isACPI || AppConfig.IsDynamicLightingOnly());
         }
 
         public static bool HasRandomColor()
@@ -288,6 +290,10 @@ namespace GHelper.USB
             else if (Mode == AuraMode.AMBIENT)
             {
                 CustomRGB.ApplyAmbient();
+            }
+            else if (Mode == AuraMode.FADE)
+            {
+                CustomRGB.ApplyFade();
             }
         }
 
@@ -922,6 +928,14 @@ namespace GHelper.USB
                 return;
             }
 
+            if (Mode == AuraMode.FADE)
+            {
+                CustomRGB.ApplyFade(true);
+                timer.Interval = AppConfig.Get("aura_fade_refresh", 100);
+                timer.Start();
+                return;
+            }
+
             if (Mode == AuraMode.GRADIENT)
             {
                 CustomRGB.ApplyGradient();
@@ -1206,6 +1220,18 @@ namespace GHelper.USB
                 else color = colorHot;
 
                 ApplyDirect(color, init);
+            }
+
+            // Software two-colour breathing: crosses straight from Color1 to Color2 and back
+            // without the dip to black that the firmware Breathe mode has.
+            public static void ApplyFade(bool init = false)
+            {
+                if (!backlight || sessionLock) return;
+
+                int period = Speed switch { AuraSpeed.Slow => 8000, AuraSpeed.Fast => 2000, _ => 4000 };
+                double phase = (Environment.TickCount64 % period) / (double)period;
+                float weight = (float)((1 - Math.Cos(2 * Math.PI * phase)) / 2); // 0 -> 1 -> 0, eased
+                ApplyDirect(ColorUtils.GetWeightedAverage(Color1, Color2, weight), init);
             }
 
             public static void ApplyBattery()
