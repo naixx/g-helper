@@ -83,6 +83,9 @@ namespace GHelper.USB
         static byte[] MESSAGE_SET = { AsusHid.AURA_ID, 0xb5, 0, 0, 0 };
 
         static readonly int AURA_ZONES = 8;
+        // Pause between per-key packets. Thread.Sleep(1) lasts ~15.6 ms at the default Windows timer
+        // resolution, which made one 11-packet frame take ~170 ms; GX703 takes the packets back to back.
+        static readonly int packetDelay = AppConfig.Get("aura_packet_delay", 0);
 
         private static AuraMode mode = AuraMode.AuraStatic;
         private static AuraSpeed speed = AuraSpeed.Normal;
@@ -712,7 +715,7 @@ namespace GHelper.USB
                     buffer[6] = (byte)i;
                     Buffer.BlockCopy(keyBuf, 3 * i, buffer, 9, 3 * buffer[7]);
                     AsusHid.SetFeatureAura(buffer);
-                    Thread.Sleep(1);
+                    if (packetDelay > 0) Thread.Sleep(packetDelay);
                 }
             }
 
