@@ -1313,6 +1313,20 @@ namespace GHelper.USB
                 }
             }
 
+            // Screen colours are gamma-encoded while the LEDs are linear, so sending them as is lights the
+            // minor channels too much and every mixed colour looks paler than on screen. Keep the brightest
+            // channel (times aura_ambient_brightness %) and take the channel ratios in linear light
+            // (aura_ambient_gamma / 100; 100 = old behaviour). Greys and white stay neutral.
+            static Color AmbientTone(Color c, double gamma, double gain)
+            {
+                double max = Math.Max(c.R, Math.Max(c.G, c.B));
+                if (max <= 0) return Color.Black;
+
+                double v = Math.Min(255, max * gain);
+                int Ch(byte x) => (int)Math.Round(Math.Pow(x / max, gamma) * v);
+                return Color.FromArgb(Ch(c.R), Ch(c.G), Ch(c.B));
+            }
+
             static void CaptureAmbient()
             {
                 if (AmbientData.IsMoveSize()) return;
@@ -1346,6 +1360,10 @@ namespace GHelper.USB
 
                 screen_low.Dispose();
                 screeb_pxl.Dispose();
+
+                double gamma = AppConfig.Get("aura_ambient_gamma", 180) / 100.0;
+                double gain = AppConfig.Get("aura_ambient_brightness", 125) / 100.0;
+                for (int i = 0; i < AURA_ZONES; i++) colors[i] = AmbientTone(colors[i], gamma, gain);
 
                 lock (AmbientData.sync) AmbientData.target = colors;
                 AmbientData.capturedAt = Environment.TickCount64;
