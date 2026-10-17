@@ -137,57 +137,6 @@ namespace GHelper.Helpers
             }
 
         }
-
-        public class SmoothColor
-        {
-            public Color RGB
-            {
-                get { return Interpolate(); }
-                set { clr = value; }
-            }
-
-            Color Interpolate()
-            {
-                clr_ = ColorInterpolator.InterpolateBetween(clr, clr_, smooth);
-                return clr_;
-            }
-
-            private float smooth = 0.65f; //smooth
-            private Color clr = new Color();
-            private Color clr_ = new Color();
-
-            static class ColorInterpolator
-            {
-                delegate byte ComponentSelector(Color color);
-                static ComponentSelector _redSelector = color => color.R;
-                static ComponentSelector _greenSelector = color => color.G;
-                static ComponentSelector _blueSelector = color => color.B;
-
-                public static Color InterpolateBetween(Color endPoint1, Color endPoint2, double lambda)
-                {
-                    if (lambda < 0 || lambda > 1)
-                        throw new ArgumentOutOfRangeException("lambda");
-
-                    if (endPoint1 != endPoint2)
-                    {
-                        return Color.FromArgb(
-                        InterpolateComponent(endPoint1, endPoint2, lambda, _redSelector),
-                        InterpolateComponent(endPoint1, endPoint2, lambda, _greenSelector),
-                        InterpolateComponent(endPoint1, endPoint2, lambda, _blueSelector)
-                        );
-                    }
-
-                    return endPoint1;
-                }
-
-                [MethodImpl(MethodImplOptions.AggressiveInlining)]
-                static byte InterpolateComponent(Color end1, Color end2, double lambda, ComponentSelector selector)
-                {
-                    return (byte)(selector(end1) + (selector(end2) - selector(end1)) * lambda);
-                }
-            }
-
-        }
     }
 
 }

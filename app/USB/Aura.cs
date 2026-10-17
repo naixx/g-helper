@@ -920,7 +920,7 @@ namespace GHelper.USB
             if (Mode == AuraMode.AMBIENT)
             {
                 CustomRGB.ApplyAmbient(true);
-                timer.Interval = AppConfig.Get("aura_refresh", AppConfig.IsStrix() ? 100 : 300);
+                timer.Interval = AppConfig.Get("aura_ambient_frame", 20); // render cadence; screen capture keeps aura_refresh
                 timer.Start();
                 return;
             }
@@ -1244,9 +1244,77 @@ namespace GHelper.USB
                 if (isACPI) Program.acpi.TUFKeyboardRGB(AuraMode.AuraStatic, color, 0xeb);
             }
 
+            // Ambient: the screen is sampled every aura_refresh ms, but the keys are rendered every
+            // aura_ambient_frame ms (default 20) and follow the latest sample through two cascaded
+            // time-based exponentials (aura_ambient_smooth ms per stage, default 200: 95% after ~0.95 s,
+            // as before). The cascade starts and ends softly, so a picture cut from 0 to 200 reaches the
+            // keys in ~47 steps of at most 8 instead of the 116/48/21 jumps of the old per-capture smoothing.
             public static void ApplyAmbient(bool init = false)
             {
                 if (!backlight || sessionLock) return;
+                if (Interlocked.Exchange(ref AmbientData.rendering, 1) == 1) return;
+
+                try
+                {
+                    long now = Environment.TickCount64;
+                    int captureInterval = AppConfig.Get("aura_refresh", AppConfig.IsStrix() ? 100 : 300);
+
+                    if (init)
+                    {
+                        CaptureAmbient();
+                    }
+                    else if (!AmbientData.capturing && now - AmbientData.capturedAt >= captureInterval)
+                    {
+                        AmbientData.capturing = true;
+                        Task.Run(() =>
+                        {
+                            try { CaptureAmbient(); }
+                            catch (Exception ex) { Logger.WriteLine("Ambient capture: " + ex.Message); }
+                            finally { AmbientData.capturing = false; }
+                        });
+                    }
+
+                    float dt = AmbientData.renderedAt == 0 ? 0 : now - AmbientData.renderedAt;
+                    AmbientData.renderedAt = now;
+                    float k = init ? 1f : 1f - (float)Math.Exp(-dt / Math.Max(1, AppConfig.Get("aura_ambient_smooth", 200)));
+
+                    int zones = isStrix ? AURA_ZONES : 1;
+                    Color[] frame = new Color[AURA_ZONES];
+                    bool fresh = init;
+
+                    lock (AmbientData.sync)
+                    {
+                        for (int i = 0; i < zones; i++)
+                        {
+                            Color target = AmbientData.target[i];
+                            float[] s = AmbientData.state[i];
+                            // stage 1: s[0..2] chases the sample, stage 2: s[3..5] chases stage 1
+                            s[0] += (target.R - s[0]) * k;
+                            s[1] += (target.G - s[1]) * k;
+                            s[2] += (target.B - s[2]) * k;
+                            s[3] += (s[0] - s[3]) * k;
+                            s[4] += (s[1] - s[4]) * k;
+                            s[5] += (s[2] - s[5]) * k;
+                            frame[i] = Color.FromArgb(Math.Clamp((int)Math.Round(s[3]), 0, 255), Math.Clamp((int)Math.Round(s[4]), 0, 255), Math.Clamp((int)Math.Round(s[5]), 0, 255));
+
+                            if (frame[i].ToArgb() != AmbientData.result[i].ToArgb()) fresh = true;
+                            AmbientData.result[i] = frame[i];
+                        }
+                    }
+
+                    if (!fresh) return;
+
+                    if (isStrix) ApplyDirect(frame, init);
+                    else ApplyDirect(frame[0], init);
+                }
+                finally
+                {
+                    AmbientData.rendering = 0;
+                }
+            }
+
+            static void CaptureAmbient()
+            {
                 if (AmbientData.IsMoveSize()) return;
 
                 var bound = Screen.GetBounds(Point.Empty);
@@ -1256,51 +1324,42 @@ namespace GHelper.USB
                 Bitmap screen_low = AmbientData.CamptureScreen(bound, 512, 288);   //quality decreases greatly if it is less 512 ;
                 Bitmap screeb_pxl = AmbientData.ResizeImage(screen_low, 4, 2);     // 4x2 zone. top for keyboard and bot for lightbar;
 
-                int zones = AURA_ZONES;
+                Color[] colors = new Color[AURA_ZONES];
 
                 if (isStrix) // laptop with lightbar
                 {
                     var mid_left = ColorUtils.GetMidColor(screeb_pxl.GetPixel(0, 1), screeb_pxl.GetPixel(1, 1));
                     var mid_right = ColorUtils.GetMidColor(screeb_pxl.GetPixel(2, 1), screeb_pxl.GetPixel(3, 1));
 
-                    AmbientData.Colors[4].RGB = ColorUtils.HSV.UpSaturation(screeb_pxl.GetPixel(1, 1)); // left bck
-                    AmbientData.Colors[5].RGB = ColorUtils.HSV.UpSaturation(mid_left);  // center left
-                    AmbientData.Colors[6].RGB = ColorUtils.HSV.UpSaturation(mid_right); // center right
-                    AmbientData.Colors[7].RGB = ColorUtils.HSV.UpSaturation(screeb_pxl.GetPixel(3, 1)); // right bck
+                    colors[4] = ColorUtils.HSV.UpSaturation(screeb_pxl.GetPixel(1, 1)); // left bck
+                    colors[5] = ColorUtils.HSV.UpSaturation(mid_left);  // center left
+                    colors[6] = ColorUtils.HSV.UpSaturation(mid_right); // center right
+                    colors[7] = ColorUtils.HSV.UpSaturation(screeb_pxl.GetPixel(3, 1)); // right bck
 
                     for (int i = 0; i < 4; i++) // keyboard
-                        AmbientData.Colors[i].RGB = ColorUtils.HSV.UpSaturation(screeb_pxl.GetPixel(i, 0));
+                        colors[i] = ColorUtils.HSV.UpSaturation(screeb_pxl.GetPixel(i, 0));
                 }
                 else
                 {
-                    zones = 1;
-                    AmbientData.Colors[0].RGB = ColorUtils.HSV.UpSaturation(ColorUtils.GetDominantColor(screeb_pxl), (float)0.3);
+                    colors[0] = ColorUtils.HSV.UpSaturation(ColorUtils.GetDominantColor(screeb_pxl), (float)0.3);
                 }
-
-                //screen_low.Save("big.jpg", ImageFormat.Jpeg);
-                //screeb_pxl.Save("small.jpg", ImageFormat.Jpeg);
 
                 screen_low.Dispose();
                 screeb_pxl.Dispose();
 
-                bool is_fresh = init;
-
-                for (int i = 0; i < zones; i++)
-                {
-                    if (AmbientData.result[i].ToArgb() != AmbientData.Colors[i].RGB.ToArgb()) is_fresh = true;
-                    AmbientData.result[i] = AmbientData.Colors[i].RGB;
-                }
-
-                if (is_fresh)
-                {
-                    if (isStrix) ApplyDirect(AmbientData.result, init);
-                    else ApplyDirect(AmbientData.result[0], init);
-                }
-
+                lock (AmbientData.sync) AmbientData.target = colors;
+                AmbientData.capturedAt = Environment.TickCount64;
             }
 
             static class AmbientData
             {
+                public static readonly object sync = new();
+                public static Color[] target = new Color[8];
+                public static readonly float[][] state = Enumerable.Range(0, 8).Select(_ => new float[6]).ToArray();
+                public static long capturedAt, renderedAt;
+                public static volatile bool capturing;
+                public static int rendering;
+
                 [DllImport("user32.dll")]
                 private static extern bool GetGUIThreadInfo(uint idThread, int[] gui);
 
@@ -1399,8 +1458,6 @@ namespace GHelper.USB
                 }
 
                 static public Color[] result = new Color[AURA_ZONES];
-                static public ColorUtils.SmoothColor[] Colors = Enumerable.Repeat(0, AURA_ZONES).
-                    Select(h => new ColorUtils.SmoothColor()).ToArray();
 
                 public static Color GetMostUsedColor(Bitmap bitMap)
                 {
