@@ -58,6 +58,8 @@ namespace GHelper.USB
         ZONETEST = 25,
         AUDIO = 26,
         AUDIOPULSE = 27,
+        FADE = 28,
+        WAVE = 29,
     }
 
     public enum AuraSpeed : int
@@ -83,6 +85,9 @@ namespace GHelper.USB
         static byte[] MESSAGE_SET = { AsusHid.AURA_ID, 0xb5, 0, 0, 0 };
 
         static readonly int AURA_ZONES = 8;
+        // Per-key LED index = row * 21 + column on the ASUS keyboard controller (ESC 21, ~ 42, Tab 63...)
+        const int LED_COLUMNS = 21;
+        const int LED_COUNT = 178;
         // Pause between per-key packets. Thread.Sleep(1) lasts ~15.6 ms at the default Windows timer
         // resolution, which made one 11-packet frame take ~170 ms; GX703 takes the packets back to back.
         static readonly int packetDelay = AppConfig.Get("aura_packet_delay", 0);
@@ -208,6 +213,8 @@ namespace GHelper.USB
             modes[AuraMode.BATTERY] = "Battery";
             modes[AuraMode.AUDIO] = "Audio Spectrum";
             modes[AuraMode.AUDIOPULSE] = "Audio Pulse";
+            modes[AuraMode.FADE] = "Two Color Fade";
+            modes[AuraMode.WAVE] = "Two Color Wave";
 
             if (isStrixKb)
             {
@@ -267,7 +274,7 @@ namespace GHelper.USB
 
         public static bool HasSecondColor()
         {
-            return (mode == AuraMode.AuraBreathe || mode == AuraMode.GRADIENT) && (!isACPI || AppConfig.IsDynamicLightingOnly());
+            return (mode == AuraMode.AuraBreathe || mode == AuraMode.GRADIENT || mode == AuraMode.FADE || mode == AuraMode.WAVE) && (!isACPI || AppConfig.IsDynamicLightingOnly());
         }
 
         public static bool HasRandomColor()
@@ -291,6 +298,14 @@ namespace GHelper.USB
             else if (Mode == AuraMode.AMBIENT)
             {
                 CustomRGB.ApplyAmbient();
+            }
+            else if (Mode == AuraMode.FADE)
+            {
+                CustomRGB.ApplyFade();
+            }
+            else if (Mode == AuraMode.WAVE)
+            {
+                CustomRGB.ApplyWave();
             }
         }
 
@@ -648,7 +663,8 @@ namespace GHelper.USB
 
         };
 
-        public static void ApplyDirect(Color[] color, bool init = false)
+        // ledColors: optional colours per LED index (see LED_COLUMNS) that replace the zone colours on the keys
+        public static void ApplyDirect(Color[] color, bool init = false, Color[]? ledColors = null)
         {
             if (color is { Length: > 0 })
             {
@@ -702,6 +718,14 @@ namespace GHelper.USB
                     keyBuf[offset + 1] = color[zone].G;
                     keyBuf[offset + 2] = color[zone].B;
                 }
+
+                if (ledColors is not null)
+                    for (int i = 0; i < ledCount; i++)
+                    {
+                        keyBuf[3 * i] = ledColors[i].R;
+                        keyBuf[3 * i + 1] = ledColors[i].G;
+                        keyBuf[3 * i + 2] = ledColors[i].B;
+                    }
 
                 for (int i = 0; i < keySet; i += ledsPerPacket)
                 {
@@ -921,6 +945,22 @@ namespace GHelper.USB
             {
                 CustomRGB.ApplyAmbient(true);
                 timer.Interval = AppConfig.Get("aura_ambient_frame", 20); // render cadence; screen capture keeps aura_refresh
+                timer.Start();
+                return;
+            }
+
+            if (Mode == AuraMode.FADE)
+            {
+                CustomRGB.ApplyFade(true);
+                timer.Interval = AppConfig.Get("aura_fade_refresh", 100);
+                timer.Start();
+                return;
+            }
+
+            if (Mode == AuraMode.WAVE)
+            {
+                CustomRGB.ApplyWave(true);
+                timer.Interval = AppConfig.Get("aura_wave_refresh", 50);
                 timer.Start();
                 return;
             }
@@ -1209,6 +1249,42 @@ namespace GHelper.USB
                 else color = colorHot;
 
                 ApplyDirect(color, init);
+            }
+
+            // Software two-colour breathing: crosses straight from Color1 to Color2 and back
+            // without the dip to black that the firmware Breathe mode has.
+            public static void ApplyFade(bool init = false)
+            {
+                if (!backlight || sessionLock) return;
+
+                int period = Speed switch { AuraSpeed.Slow => 8000, AuraSpeed.Fast => 2000, _ => 4000 };
+                double phase = (Environment.TickCount64 % period) / (double)period;
+                float weight = (float)((1 - Math.Cos(2 * Math.PI * phase)) / 2); // 0 -> 1 -> 0, eased
+                ApplyDirect(ColorUtils.GetWeightedAverage(Color1, Color2, weight), init);
+            }
+
+            // Software two-colour wave: a Color1 -> Color2 -> Color1 gradient across the keyboard width
+            // that scrolls to the right. The horizontal position comes from the LED index grid.
+            public static void ApplyWave(bool init = false)
+            {
+                if (!backlight || sessionLock) return;
+
+                int period = Speed switch { AuraSpeed.Slow => 8000, AuraSpeed.Fast => 2000, _ => 4000 };
+                double t = (Environment.TickCount64 % period) / (double)period;
+
+                Color[] leds = new Color[LED_COUNT];
+                for (int i = 0; i < leds.Length; i++)
+                {
+                    double x = (i % LED_COLUMNS) / (double)(LED_COLUMNS - 1);
+                    float weight = (float)((1 - Math.Cos(2 * Math.PI * (t - x))) / 2);
+                    leds[i] = ColorUtils.GetWeightedAverage(Color1, Color2, weight);
+                }
+
+                // zone colours only feed synced peripherals / LampArray: sample four columns
+                Color[] zones = new Color[AURA_ZONES];
+                for (int z = 0; z < AURA_ZONES; z++) zones[z] = leds[(z % 4) * (LED_COLUMNS - 1) / 3];
+
+                ApplyDirect(zones, init, leds);
             }
 
             public static void ApplyBattery()
