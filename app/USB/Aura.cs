@@ -1231,7 +1231,8 @@ namespace GHelper.USB
                 for (int i = 0; i < leds.Length; i++)
                 {
                     double x = (i % LED_COLUMNS) / (double)(LED_COLUMNS - 1);
-                    float weight = (float)((1 - Math.Cos(2 * Math.PI * (t - x))) / 2);
+                    double w = (1 - Math.Cos(2 * Math.PI * (t - x))) / 2;
+                    float weight = (float)(w * w * (3 - 2 * w));
                     leds[i] = ColorUtils.GetWeightedAverage(Color1, Color2, weight);
                 }
 
