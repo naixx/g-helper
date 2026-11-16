@@ -220,7 +220,7 @@ namespace GHelper.Input
             }
 
             foreach (ushort code in GetActiveMouseComboCarriers())
-                hook.RegisterHotKey(ModifierKeys.None, Keys.F13 + (code - 0x0068));
+                hook.RegisterHotKey(ModifierKeys.NoRepeat, Keys.F13 + (code - 0x0068));
 
             for (int slot = 0; slot < AsusKeyboard.LaunchSlots; slot++)
                 if (AsusKeyboard.LaunchCommand(slot).Length > 0)
@@ -234,7 +234,7 @@ namespace GHelper.Input
             foreach (var m in PeripheralsProvider.SnapshotMice())
             {
                 if (!m.HasButtonBindings() || m.ButtonBindings is null) continue;
-                foreach (ushort code in m.ButtonBindings)
+                foreach (ushort code in m.BoundCodes())
                     if (AsusMouse.CombosByCode.ContainsKey(code) && seen.Add(code))
                         yield return code;
             }

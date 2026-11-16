@@ -892,16 +892,63 @@ namespace GHelper
         private readonly List<UI.RComboBox> _bindingCombos = new();
         private object[] _bindingComboItems = [];
 
+        private bool _pickingCombo;
+
+        private sealed class BindingCustom
+        {
+            public override string ToString() => Properties.Strings.Custom + "…";
+        }
+
         private object[] BuildBindingComboItems()
         {
             var list = new List<object>();
             foreach (var (groupLabel, items) in mouse.BindingGroups)
             {
+                bool combos = groupLabel == "Combos";
                 list.Add(new BindingSeparator(groupLabel));
                 foreach (var (code, name) in items)
-                    list.Add(new BindingItem(code, name));
+                    list.Add(new BindingItem(code, combos ? AsusMouse.CombosByCode[code].DisplayName : name));
+                if (combos) list.Add(new BindingCustom());
             }
             return list.ToArray();
+        }
+
+        private void RefreshBindingItems()
+        {
+            _bindingComboItems = BuildBindingComboItems();
+            _updatingBindings = true;
+            foreach (var cmb in _bindingCombos)
+            {
+                cmb.Items.Clear();
+                cmb.Items.AddRange(_bindingComboItems);
+            }
+            _updatingBindings = false;
+            VisualizeButtonBindings();
+        }
+
+        // Deferred, so it runs after the dropdown has closed and the selection has settled
+        private void BindingCombo_Custom(object? sender, EventArgs e)
+        {
+            if (sender is UI.RComboBox cmb && cmb.SelectedItem is BindingCustom) BeginInvoke(() => PickCombo(cmb));
+        }
+
+        private void PickCombo(UI.RComboBox cmb)
+        {
+            if (_pickingCombo || cmb.DroppedDown || cmb.SelectedItem is not BindingCustom || cmb.Tag is not int slot) return;
+            _pickingCombo = true;
+
+            using var picker = new RKeyComboPicker();
+            if (picker.ShowDialog(this) == DialogResult.OK)
+            {
+                var combo = AsusMouse.AssignCombo(picker.Combo);
+                if (combo is null) MessageBox.Show(this, "All combo slots are bound to mouse buttons");
+                else if (_shiftLayer) mouse.SetSpeedShiftBinding(slot, combo.PassthroughCode);
+                else mouse.SetButtonBinding(slot, combo.PassthroughCode);
+                Program.inputDispatcher?.RegisterKeys();
+            }
+
+            _pickingCombo = false;
+            RefreshBindingItems();
         }
 
         private void InitBindingCombos()
@@ -949,6 +996,7 @@ namespace GHelper
                 cmb.Tag = slot;
                 cmb.DrawItem += RComboBox.DrawBindingItem;
                 cmb.SelectedIndexChanged += BindingCombo_Changed;
+                cmb.DropDownClosed += BindingCombo_Custom;
                 panelLeft.Controls.Add(lbl);
                 panelLeft.Controls.Add(cmb);
                 _bindingCombos.Add(cmb);
@@ -1008,12 +1056,14 @@ namespace GHelper
                     cmb.SelectedIndex = next;
                 return;
             }
+            BindingCombo_Custom(sender, e);
             if (cmb.SelectedItem is BindingItem item)
             {
                 if (_shiftLayer)
                 {
                     if (item.Code == AsusMouse.SpeedShiftCode) VisualizeButtonBindings();
                     else mouse.SetSpeedShiftBinding(slot, item.Code);
+                    Program.inputDispatcher?.RegisterKeys();
                     return;
                 }
                 mouse.SetButtonBinding(slot, item.Code);

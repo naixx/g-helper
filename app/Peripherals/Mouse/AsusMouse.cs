@@ -1,5 +1,6 @@
 ﻿using GHelper.AnimeMatrix.Communication;
 using GHelper.AnimeMatrix.Communication.Platform;
+using GHelper.Input;
 using GHelper.USB;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -2356,10 +2357,46 @@ namespace GHelper.Peripherals.Mouse
         {
             public string ConfigKey => $"mouse_combo_F{13 + (PassthroughCode - 0x0068)}";
             public string ResolveCommand() => AppConfig.GetString(ConfigKey) ?? DefaultCommand;
+            public bool IsCustom => AppConfig.Exists(ConfigKey);
+            public string DisplayName =>
+                IsCustom && ParseKeys(ResolveCommand()) is { Length: > 0 } keys ? KeysLabel(keys) : Label;
         }
 
         private static string Hex(params Keys[] keys) =>
             string.Join(" ", keys.Select(k => $"0x{(int)k:X2}"));
+
+        private static Keys[] ParseKeys(string command) =>
+            InputDispatcher.ParseHexValues(command).Select(k => (Keys)k).ToArray();
+
+        public static string KeysLabel(IEnumerable<Keys> keys) =>
+            string.Join(" + ", keys.Select(KeyLabel));
+
+        private static string KeyLabel(Keys key) => key switch
+        {
+            Keys.ControlKey or Keys.LControlKey or Keys.RControlKey => "Ctrl",
+            Keys.ShiftKey or Keys.LShiftKey or Keys.RShiftKey => "Shift",
+            Keys.Menu or Keys.LMenu or Keys.RMenu => "Alt",
+            Keys.LWin or Keys.RWin => "Win",
+            >= Keys.D0 and <= Keys.D9 => ((char)key).ToString(),
+            Keys.Return => "Enter",
+            Keys.Escape => "Esc",
+            Keys.Back => "Backspace",
+            Keys.Prior => "Page Up",
+            Keys.Next => "Page Down",
+            Keys.Snapshot => "PrtSc",
+            Keys.Oem1 => ";",
+            Keys.Oemplus => "=",
+            Keys.Oemcomma => ",",
+            Keys.OemMinus => "-",
+            Keys.OemPeriod => ".",
+            Keys.Oem2 => "/",
+            Keys.Oem3 => "`",
+            Keys.Oem4 => "[",
+            Keys.Oem5 => "\\",
+            Keys.Oem6 => "]",
+            Keys.Oem7 => "'",
+            _ => key.ToString(),
+        };
 
         public static readonly IReadOnlyList<ComboDef> MouseCombos = new List<ComboDef>
         {
@@ -2379,6 +2416,20 @@ namespace GHelper.Peripherals.Mouse
 
         public static readonly Dictionary<ushort, ComboDef> CombosByCode =
             MouseCombos.ToDictionary(c => c.PassthroughCode);
+
+        // Returns the slot that already holds these keys, or stores them in a slot no connected
+        // mouse is bound to: a custom one first, then a preset from the end of the list.
+        public static ComboDef? AssignCombo(Keys[] keys)
+        {
+            var combo = MouseCombos.FirstOrDefault(c => ParseKeys(c.ResolveCommand()).SequenceEqual(keys));
+            if (combo is not null) return combo;
+
+            var bound = PeripheralsProvider.SnapshotMice().SelectMany(m => m.BoundCodes()).ToHashSet();
+            combo = MouseCombos.LastOrDefault(c => c.IsCustom && !bound.Contains(c.PassthroughCode))
+                ?? MouseCombos.LastOrDefault(c => !bound.Contains(c.PassthroughCode));
+            if (combo is not null) AppConfig.Set(combo.ConfigKey, Hex(keys));
+            return combo;
+        }
 
         public static readonly IReadOnlyList<(string GroupLabel, IReadOnlyList<(ushort Code, string Name)> Items)>
         DefaultBindingGroups = new List<(string, IReadOnlyList<(ushort, string)>)>
@@ -2400,7 +2451,8 @@ namespace GHelper.Peripherals.Mouse
                 .ToDictionary(e => e.Code, e => e.Name);
 
         public static string LabelForActionCode(ushort code)
-            => BindingCodes.TryGetValue(code, out var n) ? n : $"Unknown (0x{code:X4})";
+            => CombosByCode.TryGetValue(code, out var c) ? c.DisplayName
+            : BindingCodes.TryGetValue(code, out var n) ? n : $"Unknown (0x{code:X4})";
 
         public virtual IReadOnlyList<(string GroupLabel, IReadOnlyList<(ushort Code, string Name)> Items)>
             BindingGroups => DefaultBindingGroups;
@@ -2514,6 +2566,9 @@ namespace GHelper.Peripherals.Mouse
         }
 
         public bool HasSpeedShift => BindingGroups == SpeedShiftBindingGroups;
+
+        public IEnumerable<ushort> BoundCodes() =>
+            HasSpeedShift ? ButtonBindings.Concat(ButtonSlots.Keys.Select(GetSpeedShiftBinding)) : ButtonBindings;
 
         private string SpeedShiftSlotConfigKey(int slot) =>
             $"mouse_shift_binding_{_productId:X4}_{slot}";
