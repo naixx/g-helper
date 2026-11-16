@@ -220,7 +220,7 @@ namespace GHelper.Input
             }
 
             foreach (ushort code in GetActiveMouseComboCarriers())
-                hook.RegisterHotKey(ModifierKeys.NoRepeat, Keys.F13 + (code - 0x0068));
+                hook.RegisterHotKey(ModifierKeys.None, Keys.F13 + (code - 0x0068));
 
             for (int slot = 0; slot < AsusKeyboard.LaunchSlots; slot++)
                 if (AsusKeyboard.LaunchCommand(slot).Length > 0)
