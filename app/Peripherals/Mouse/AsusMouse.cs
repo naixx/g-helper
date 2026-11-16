@@ -984,6 +984,29 @@ namespace GHelper.Peripherals.Mouse
             this.Profile = profile;
         }
 
+        public void ToggleProfile()
+        {
+            if (!HasProfiles() || ProfileCount() < 2) return;
+
+            SetProfile(Profile == 0 ? 1 : 0);
+            SynchronizeDevice();
+            ProfileChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        // Bindings are stored per profile, so the toggle goes on the same button in both
+        public void SetProfileToggle(int slot, ushort code)
+        {
+            int active = Profile;
+            foreach (int other in new[] { 0, 1 })
+            {
+                if (other == active) continue;
+                SetProfile(other);
+                SetButtonBinding(slot, code);
+            }
+            SetProfile(active);
+            SetButtonBinding(slot, code);
+        }
+
         // ------------------------------------------------------------------------------
         // Polling Rate and Angle Snapping
         // ------------------------------------------------------------------------------
@@ -2358,9 +2381,14 @@ namespace GHelper.Peripherals.Mouse
             public string ConfigKey => $"mouse_combo_F{13 + (PassthroughCode - 0x0068)}";
             public string ResolveCommand() => AppConfig.GetString(ConfigKey) ?? DefaultCommand;
             public bool IsCustom => AppConfig.Exists(ConfigKey);
+            public bool IsProfile => ResolveCommand() == ProfileCommand;
             public string DisplayName =>
-                IsCustom && ParseKeys(ResolveCommand()) is { Length: > 0 } keys ? KeysLabel(keys) : Label;
+                IsProfile ? ProfileLabel
+                : IsCustom && ParseKeys(ResolveCommand()) is { Length: > 0 } keys ? KeysLabel(keys) : Label;
         }
+
+        public const string ProfileCommand = "profile";
+        public const string ProfileLabel = "Profile 1 ↔ 2";
 
         private static string Hex(params Keys[] keys) =>
             string.Join(" ", keys.Select(k => $"0x{(int)k:X2}"));
@@ -2417,17 +2445,24 @@ namespace GHelper.Peripherals.Mouse
         public static readonly Dictionary<ushort, ComboDef> CombosByCode =
             MouseCombos.ToDictionary(c => c.PassthroughCode);
 
-        // Returns the slot that already holds these keys, or stores them in a slot no connected
+        public static ComboDef? AssignCombo(Keys[] keys) =>
+            AssignCommand(Hex(keys), c => ParseKeys(c.ResolveCommand()).SequenceEqual(keys));
+
+        public static ComboDef? AssignProfileToggle() =>
+            AssignCommand(ProfileCommand, c => c.IsProfile);
+
+        // Returns the slot that already holds the command, or stores it in a slot no connected
         // mouse is bound to: a custom one first, then a preset from the end of the list.
-        public static ComboDef? AssignCombo(Keys[] keys)
+        // The profile toggle keeps its slot: the other profile is bound to it and is not visible here.
+        private static ComboDef? AssignCommand(string command, Func<ComboDef, bool> holds)
         {
-            var combo = MouseCombos.FirstOrDefault(c => ParseKeys(c.ResolveCommand()).SequenceEqual(keys));
+            var combo = MouseCombos.FirstOrDefault(holds);
             if (combo is not null) return combo;
 
             var bound = PeripheralsProvider.SnapshotMice().SelectMany(m => m.BoundCodes()).ToHashSet();
-            combo = MouseCombos.LastOrDefault(c => c.IsCustom && !bound.Contains(c.PassthroughCode))
-                ?? MouseCombos.LastOrDefault(c => !bound.Contains(c.PassthroughCode));
-            if (combo is not null) AppConfig.Set(combo.ConfigKey, Hex(keys));
+            bool Free(ComboDef c) => !c.IsProfile && !bound.Contains(c.PassthroughCode);
+            combo = MouseCombos.LastOrDefault(c => c.IsCustom && Free(c)) ?? MouseCombos.LastOrDefault(Free);
+            if (combo is not null) AppConfig.Set(combo.ConfigKey, command);
             return combo;
         }
 

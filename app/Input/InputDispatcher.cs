@@ -220,7 +220,7 @@ namespace GHelper.Input
             }
 
             foreach (ushort code in GetActiveMouseComboCarriers())
-                hook.RegisterHotKey(ModifierKeys.NoRepeat, Keys.F13 + (code - 0x0068));
+                hook.RegisterHotKey(ModifierKeys.None, Keys.F13 + (code - 0x0068));
 
             for (int slot = 0; slot < AsusKeyboard.LaunchSlots; slot++)
                 if (AsusKeyboard.LaunchCommand(slot).Length > 0)
@@ -238,6 +238,32 @@ namespace GHelper.Input
                     if (AsusMouse.CombosByCode.ContainsKey(code) && seen.Add(code))
                         yield return code;
             }
+        }
+
+        private static int profileToggle;
+
+        private static void ToggleMouseProfile(Keys key, ushort code)
+        {
+            if (Interlocked.Exchange(ref profileToggle, 1) == 1) return;
+
+            Task.Run(() =>
+            {
+                try
+                {
+                    foreach (var m in PeripheralsProvider.SnapshotMice().Where(m => m.BoundCodes().Contains(code)))
+                    {
+                        m.ToggleProfile();
+                        Program.toast.RunToast(Properties.Strings.Profile + " " + (m.Profile + 1));
+                    }
+
+                    // A held button keeps firing the hotkey: stay busy until it is released
+                    for (int i = 0; i < 500 && (User32.GetAsyncKeyState((int)key) & 0x8000) != 0; i++) Thread.Sleep(20);
+                }
+                finally
+                {
+                    profileToggle = 0;
+                }
+            });
         }
 
 
@@ -355,7 +381,8 @@ namespace GHelper.Input
                     ushort code = (ushort)(0x68 + (e.Key - Keys.F13));
                     if (AsusMouse.CombosByCode.TryGetValue(code, out var combo))
                     {
-                        RunKeyCommand(combo.ResolveCommand(), launchOnNoKeys: false);
+                        if (combo.IsProfile) ToggleMouseProfile(e.Key, code);
+                        else RunKeyCommand(combo.ResolveCommand(), launchOnNoKeys: false);
                         return;
                     }
                 }

@@ -892,13 +892,24 @@ namespace GHelper
         private readonly List<UI.RComboBox> _bindingCombos = new();
         private object[] _bindingComboItems = [];
 
-        private bool _pickingCombo;
+        private bool _runningAction;
 
-        private sealed class BindingCustom
+        // A list entry that runs an action instead of holding a binding code
+        private sealed class BindingAction(string text)
         {
-            public override string ToString() => Properties.Strings.Custom + "…";
+            public override string ToString() => text;
         }
 
+        private readonly BindingAction _customCombo = new(Properties.Strings.Custom + "…");
+        private readonly BindingAction _profileToggle = new(AsusMouse.ProfileLabel);
+
+        private static bool IsProfileToggle(ushort code) =>
+            AsusMouse.CombosByCode.TryGetValue(code, out var combo) && combo.IsProfile;
+
+        private ushort BoundCode(int slot) =>
+            _shiftLayer ? mouse.GetSpeedShiftBinding(slot) : mouse.ButtonBindings[slot];
+
+        // The slot that carries the profile toggle is listed once, as the action entry
         private object[] BuildBindingComboItems()
         {
             var list = new List<object>();
@@ -907,8 +918,12 @@ namespace GHelper
                 bool combos = groupLabel == "Combos";
                 list.Add(new BindingSeparator(groupLabel));
                 foreach (var (code, name) in items)
-                    list.Add(new BindingItem(code, combos ? AsusMouse.CombosByCode[code].DisplayName : name));
-                if (combos) list.Add(new BindingCustom());
+                {
+                    if (!combos) list.Add(new BindingItem(code, name));
+                    else if (!IsProfileToggle(code)) list.Add(new BindingItem(code, AsusMouse.CombosByCode[code].DisplayName));
+                }
+                if (combos && mouse.HasProfiles() && mouse.ProfileCount() > 1) list.Add(_profileToggle);
+                if (combos) list.Add(_customCombo);
             }
             return list.ToArray();
         }
@@ -927,27 +942,36 @@ namespace GHelper
         }
 
         // Deferred, so it runs after the dropdown has closed and the selection has settled
-        private void BindingCombo_Custom(object? sender, EventArgs e)
+        private void BindingCombo_Action(object? sender, EventArgs e)
         {
-            if (sender is UI.RComboBox cmb && cmb.SelectedItem is BindingCustom) BeginInvoke(() => PickCombo(cmb));
+            if (sender is UI.RComboBox cmb && cmb.SelectedItem is BindingAction) BeginInvoke(() => RunBindingAction(cmb));
         }
 
-        private void PickCombo(UI.RComboBox cmb)
+        private void RunBindingAction(UI.RComboBox cmb)
         {
-            if (_pickingCombo || cmb.DroppedDown || cmb.SelectedItem is not BindingCustom || cmb.Tag is not int slot) return;
-            _pickingCombo = true;
+            if (_runningAction || cmb.DroppedDown || cmb.SelectedItem is not BindingAction action || cmb.Tag is not int slot) return;
+            // A button that already holds the toggle rests on this entry: reopening the list must not write it again
+            if (action == _profileToggle && IsProfileToggle(BoundCode(slot))) return;
+            _runningAction = true;
 
-            using var picker = new RKeyComboPicker();
-            if (picker.ShowDialog(this) == DialogResult.OK)
+            Keys[]? keys = null;
+            if (action == _customCombo)
             {
-                var combo = AsusMouse.AssignCombo(picker.Combo);
+                using var picker = new RKeyComboPicker();
+                if (picker.ShowDialog(this) == DialogResult.OK) keys = picker.Combo;
+            }
+
+            if (action == _profileToggle || keys is not null)
+            {
+                var combo = keys is null ? AsusMouse.AssignProfileToggle() : AsusMouse.AssignCombo(keys);
                 if (combo is null) MessageBox.Show(this, "All combo slots are bound to mouse buttons");
                 else if (_shiftLayer) mouse.SetSpeedShiftBinding(slot, combo.PassthroughCode);
+                else if (combo.IsProfile) mouse.SetProfileToggle(slot, combo.PassthroughCode);
                 else mouse.SetButtonBinding(slot, combo.PassthroughCode);
                 Program.inputDispatcher?.RegisterKeys();
             }
 
-            _pickingCombo = false;
+            _runningAction = false;
             RefreshBindingItems();
         }
 
@@ -996,7 +1020,7 @@ namespace GHelper
                 cmb.Tag = slot;
                 cmb.DrawItem += RComboBox.DrawBindingItem;
                 cmb.SelectedIndexChanged += BindingCombo_Changed;
-                cmb.DropDownClosed += BindingCombo_Custom;
+                cmb.DropDownClosed += BindingCombo_Action;
                 panelLeft.Controls.Add(lbl);
                 panelLeft.Controls.Add(cmb);
                 _bindingCombos.Add(cmb);
@@ -1056,7 +1080,7 @@ namespace GHelper
                     cmb.SelectedIndex = next;
                 return;
             }
-            BindingCombo_Custom(sender, e);
+            BindingCombo_Action(sender, e);
             if (cmb.SelectedItem is BindingItem item)
             {
                 if (_shiftLayer)
@@ -1086,9 +1110,10 @@ namespace GHelper
                 ushort code = _shiftLayer && !locked ? mouse.GetSpeedShiftBinding(slot) : mouse.ButtonBindings[slot];
                 cmb.Enabled = !locked;
 
+                bool profile = IsProfileToggle(code);
                 for (int j = 0; j < cmb.Items.Count; j++)
                 {
-                    if (cmb.Items[j] is BindingItem item && item.Code == code)
+                    if (profile ? cmb.Items[j] == _profileToggle : cmb.Items[j] is BindingItem item && item.Code == code)
                     { cmb.SelectedIndex = j; break; }
                 }
                 row++;
